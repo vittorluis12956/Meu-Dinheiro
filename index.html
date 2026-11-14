@@ -71,6 +71,7 @@ h1{font-size:28px}h2{font-size:19px}.card .big{font-size:24px}.pill{font-size:13
 .top{flex-wrap:wrap}
 @media(max-width:760px){.srch{flex-basis:100%}}
 .modal>.card{width:100%;max-width:420px;margin:0}
+form.one{grid-template-columns:1fr}.tabs{display:flex;gap:8px;margin-bottom:14px}.tabs .btn{flex:1}
 #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--g);color:#04120a;padding:10px 16px;border-radius:10px;font-weight:700;display:none;z-index:9}
 @media(max-width:760px){
  .app{display:block}
@@ -87,7 +88,13 @@ h1{font-size:28px}h2{font-size:19px}.card .big{font-size:24px}.pill{font-size:13
 <main id="main"></main>
 </div>
 <div id="toast"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.9/dist/umd/supabase.js"></script>
 <script>
+// ===== CONFIGURAÇÃO DO SUPABASE (é aqui que ficam a Project URL e a Publishable Key) =====
+// Estas duas informações são PÚBLICAS por design. NUNCA coloque aqui a Secret Key nem a service_role.
+const SUPABASE_URL='https://vgrsswyrmyrlgurfpgzh.supabase.co';
+const SUPABASE_KEY='sb_publishable_Rhmq52Yw5Zo82LhY7B12TQ_ZZUG1969';
+let SB=null;try{SB=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}})}catch(e){}
 const FREE_LIMIT=30;
 const CATS_R=['Salário','Freelance','Investimentos','Vendas','Outros'];
 const CATS_D=['Moradia','Alimentação','Transporte','Lazer','Saúde','Educação','Contas','Outros'];
@@ -96,7 +103,7 @@ const VIEWS=[['dash','▦','Dashboard'],['rec','＋','Receitas'],['desp','－','
 const KEY='moneycontrol_pro_v1';
 const brl=n=>(S&&S.hide)?'R$ •••••':Number(n||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const uid=()=>Math.random().toString(36).slice(2,9);
+const uid=()=>crypto.randomUUID?crypto.randomUUID():'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r:(r&3|8)).toString(16)});
 const today=()=>new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'});
 const mk=d=>d.slice(0,7);
 const mlabel=m=>{const[y,mo]=m.split('-');return['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][+mo-1]+'/'+y.slice(2)};
@@ -114,27 +121,29 @@ function seed(){
  plan:'free',trialStart:null,view:'dash',initial:12000,relMonth:m0};
 }
 function empty(){return{tx:[],goals:[],inv:[],plan:'free',trialStart:null,view:'dash',relMonth:mshift(0)}}
-let MODE='real';
-try{MODE=localStorage.getItem(KEY+'_mode')==='demo'?'demo':'real'}catch(e){}
+let MODE='none',USER=null,PROFILE=null,AUTHTAB='login',AUTHMSG='',RECOVERY=/type=recovery/.test(location.hash);
+
 function load(m){let d=null;try{d=JSON.parse(localStorage.getItem(KEY+'_'+m))}catch(e){}
  if(!d&&m==='demo'){try{d=JSON.parse(localStorage.getItem(KEY))}catch(e){}}
  if(!d||!d.tx)d=m==='demo'?seed():empty();if(m==='demo'&&d.initial===undefined)d.initial=12000;return d}
-let S=load(MODE);
-function save(){try{localStorage.setItem(KEY+'_'+MODE,JSON.stringify(S));localStorage.setItem(KEY+'_mode',MODE)}catch(e){}}
+let BOOTING=true;let S=MODE==='demo'?load('demo'):null;
+function save(){if(MODE==='real'){if(SB&&USER)scheduleSync();return}if(MODE!=='demo'||!S)return;try{localStorage.setItem(KEY+'_demo',JSON.stringify(S));localStorage.setItem(KEY+'_mode','demo')}catch(e){}}
 function setMode(m){if(m===MODE)return;save();MODE=m;S=load(m);save();render();window.scrollTo(0,0);toast(m==='real'?'Meu controle: tudo começa em R$ 0,00':'Modo demonstração')}
-function modeBar(){return MODE==='demo'?'<div class="mode demo"><span><b>Modo demonstração</b> · dados de exemplo, não são seus</span><button class="btn sm" onclick="setMode(\'real\')">Começar do zero</button></div>':'<div class="mode"><span><b>Meu controle</b> · seus dados reais, saldo inicial R$ 0,00</span><button class="btn ghost sm" onclick="setMode(\'demo\')">Ver demonstração</button></div>'}
+function modeBar(){return `<div class='mode'><span><b>Olá, ${esc((PROFILE&&PROFILE.name)||'bem-vindo')}</b> · <span id='syncst'>${syncText()}</span></span><button class='btn ghost sm' onclick=logout()>Sair</button></div>`}
+function modeBarOld2(){const demo=MODE==='demo';return `<div class='mode${demo?' demo':''}'><span>${demo?'<b>Modo demonstração</b> · dados de exemplo, não são seus':`<b>Olá, ${esc((PROFILE&&PROFILE.name)||'bem-vindo')}</b> · <span id='syncst'>${syncText()}</span>`}</span><span style='display:flex;gap:8px;flex-wrap:wrap'>${demo?(USER?`<button class='btn sm' onclick=backToAccount()>Voltar à minha conta</button>`:`<button class='btn sm' onclick=goAuth()>Entrar ou criar conta</button>`):`<button class='btn ghost sm' onclick=goDemo()>Ver demonstração</button><button class='btn ghost sm' onclick=logout()>Sair</button>`}</span></div>`}
+function modeBarOld(){return MODE==='demo'?'<div class="mode demo"><span><b>Modo demonstração</b> · dados de exemplo, não são seus</span><button class="btn sm" onclick="setMode(\'real\')">Começar do zero</button></div>':'<div class="mode"><span><b>Meu controle</b> · seus dados reais, saldo inicial R$ 0,00</span><button class="btn ghost sm" onclick="setMode(\'demo\')">Ver demonstração</button></div>'}
 function toast(t){const e=document.getElementById('toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',2200)}
 const TRIAL_DAYS=7;
 let ZOOM=1;try{ZOOM=+localStorage.getItem('md_zoom')||1}catch(e){}
 function applyZoom(){document.documentElement.style.zoom=ZOOM}
 function cycleZoom(){ZOOM=ZOOM>=1.3?1:Math.round((ZOOM+.15)*100)/100;try{localStorage.setItem('md_zoom',ZOOM)}catch(e){}applyZoom();toast('Letras: '+(ZOOM===1?'tamanho normal':ZOOM<1.2?'grandes':'muito grandes'))}
-function toggleHide(){S.hide=!S.hide;save();render();toast(S.hide?'Valores ocultos':'Valores visíveis')}
+function toggleHide(){S.hide=!S.hide;try{localStorage.setItem('md_hide',S.hide?'1':'0')}catch(e){}save();render();toast(S.hide?'Valores ocultos':'Valores visíveis')}
 document.addEventListener('click',e=>{const b=e.target.closest&&e.target.closest('form button:not([type=button])');if(!b||!b.form||!b.form.onsubmit)return;e.preventDefault();const f=b.form;if(f.reportValidity&&!f.reportValidity())return;f.onsubmit({preventDefault(){},target:f})});
 function ask(msg,yes){openModal(`<div class='card'><h2>Confirmar</h2><p>${esc(msg)}</p><div style='display:flex;gap:10px;flex-wrap:wrap'><button class='btn' id='askYes'>Sim, continuar</button><button class='btn ghost' onclick=closeModal()>Cancelar</button></div></div>`);document.getElementById('askYes').onclick=()=>{closeModal();yes()}}
 applyZoom();
 function gTrial(){try{return +localStorage.getItem('md_trial')||0}catch(e){return 0}}
-function trialLeft(){const t=gTrial();return t?Math.max(0,Math.ceil((t+TRIAL_DAYS*864e5-Date.now())/864e5)):0}
-function isPro(){const t=gTrial();return !!t&&Date.now()-t<TRIAL_DAYS*864e5}
+function trialLeft(){if(MODE==='real')return PROFILE&&PROFILE.plan_source==='trial'&&PROFILE.plan_expires_at?Math.max(0,Math.ceil((new Date(PROFILE.plan_expires_at)-Date.now())/864e5)):0;const t=gTrial();return t?Math.max(0,Math.ceil((t+TRIAL_DAYS*864e5-Date.now())/864e5)):0}
+function isPro(){if(MODE==='real')return !!PROFILE&&PROFILE.plan==='pro'&&(!PROFILE.plan_expires_at||new Date(PROFILE.plan_expires_at)>Date.now());const t=gTrial();return !!t&&Date.now()-t<TRIAL_DAYS*864e5}
 function parseBR(s){s=String(s).replace(/[^\d.,-]/g,'');if(s.includes(',')){s=s.replace(/\./g,'').replace(',','.')}else if(/^\d{1,3}(\.\d{3})+$/.test(s)){s=s.replace(/\./g,'')}const n=parseFloat(s);return Math.abs(n)>999999999.99?NaN:Math.round(n*100)/100}
 document.addEventListener('focusout',e=>{const i=e.target;if(i.tagName==='INPUT'&&['v','t','s','a'].includes(i.name)&&i.value.trim()){const n=parseBR(i.value);if(!isNaN(n))i.value=n.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}});
 function openModal(h){closeModal();const o=document.createElement('div');o.id='modal';o.className='modal';o.innerHTML=h;document.body.appendChild(o)}
@@ -269,9 +278,9 @@ planos(){
  <div class="plans"><div class="plan"><h2>Free</h2><div class="price">R$ 0</div><ul><li>Até ${FREE_LIMIT} movimentações por mês</li><li>Gráfico básico (3 meses)</li><li>2 metas financeiras</li><li>Histórico de 3 meses</li><li>Controle de receitas e despesas</li></ul>
  ${pro?'<button class="btn ghost" onclick="setPlan(\'free\')">Voltar ao Free (demo)</button>':'<span class="tag">Plano atual</span><p class="lbl">Uso: '+n+' / '+FREE_LIMIT+' movimentações no mês</p>'}</div>
  <div class="plan pro"><h2>PRO <span class="tag">7 dias grátis</span></h2><div class="price">R$ 9,90<small class="lbl">/mês</small></div><ul><li>Movimentações ilimitadas</li><li>Gráficos de 6 meses</li><li>Metas ilimitadas</li><li>Histórico completo</li><li>Controle de investimentos</li><li>Relatórios mensais e anuais <small class="lbl">(anual em breve)</small></li><li>Exportação para Excel e PDF <small class="lbl">(em breve)</small></li><li>Planejamento financeiro <small class="lbl">(em breve)</small></li><li>Personalização do painel <small class="lbl">(em breve)</small></li></ul>
- ${pro?'<span class="tag">Teste PRO ativo · '+trialLeft()+' dia(s) restante(s)</span><p class="lbl">Simulação: nenhuma cobrança. Ao fim dos 7 dias o app volta ao plano Free.</p>':'<button class="btn" onclick="setPlan(\'pro\')">Simular teste grátis PRO</button>'}</div></div>
- <div class="card" style="margin-top:14px"><h2>Ainda em desenvolvimento</h2><p class="lbl">Estas funções ainda NÃO estão disponíveis: login e sincronização entre aparelhos, pagamento Pix, painel administrativo, programa de afiliados, calendário financeiro, despesas recorrentes, lembretes de contas e orçamento por categoria. O plano PRO e o teste de 7 dias aqui são apenas uma simulação neste aparelho.</p></div>
- <div class="card" style="margin-top:14px"><h2>${MODE==='demo'?'Dados de demonstração':'Meus dados'}</h2><p class="lbl">Os dados ficam salvos só neste navegador. A demonstração e o Meu controle são separados: mexer em um não altera o outro.</p><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><button class="btn ghost" onclick="exportCSV()">Exportar CSV</button><button class="btn ghost" onclick="backup()">Fazer backup</button><label class="btn ghost" style="cursor:pointer;display:inline-block">Restaurar backup<input type="file" accept=".json,application/json" onchange="restoreFile(this)" hidden></label><button class="btn ghost" onclick="setInitial()">Saldo inicial</button></div><button class="btn ghost" onclick="resetDemo()">${MODE==='demo'?'Restaurar dados de demonstração':'Zerar tudo (apagar meus dados)'}</button></div>`;
+ ${pro?'<span class="tag">Teste PRO ativo · '+trialLeft()+' dia(s) restante(s)</span><p class="lbl">Simulação: nenhuma cobrança. Ao fim dos 7 dias o app volta ao plano Free.</p>':'<button class="btn" onclick="setPlan(\'pro\')">Começar teste grátis de 7 dias</button>'}</div></div>
+ <div class="card" style="margin-top:14px"><h2>Ainda em desenvolvimento</h2><p class="lbl">Estas funções ainda NÃO estão disponíveis: pagamento Pix e assinatura do PRO, painel administrativo, programa de afiliados, calendário financeiro, despesas recorrentes, lembretes de contas e orçamento por categoria. O teste grátis de 7 dias é controlado pela sua conta (uma vez por conta).</p></div>
+ <div class="card" style="margin-top:14px"><h2>${MODE==='demo'?'Dados de demonstração':'Meus dados'}</h2><p class="lbl">Seus dados ficam salvos na sua conta e aparecem em qualquer aparelho em que você entrar.</p><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><button class="btn ghost" onclick="exportCSV()">Exportar CSV</button><button class="btn ghost" onclick="backup()">Fazer backup</button><label class="btn ghost" style="cursor:pointer;display:inline-block">Restaurar backup<input type="file" accept=".json,application/json" onchange="restoreFile(this)" hidden></label><button class="btn ghost" onclick="setInitial()">Saldo inicial</button>${MODE==='real'?'<button class="btn ghost" onclick="delAccount()">Excluir minha conta</button>':''}</div><button class="btn ghost" onclick="resetDemo()">${MODE==='demo'?'Restaurar dados de demonstração':'Zerar tudo (apagar meus dados)'}</button></div>`;
 }};
 function addGoal(e){e.preventDefault();if(!isPro()&&S.goals.length>=2){toast('Plano Free: até 2 metas');go('planos');return}const f=new FormData(e.target),t=parseBR(f.get('t')),s=parseBR(f.get('s')||'0')||0;
  if(!(t>0)){toast('Digite o valor alvo, ex.: 5.000,00');return}if(s<0||s>t){toast('O valor já guardado deve ficar entre zero e o valor alvo');return}if(s>avail()+0.001){toast('Você só tem '+brl(avail())+' disponível para guardar');return}S.goals.push({id:uid(),name:f.get('n').trim(),target:t,saved:s});save();render();toast('Meta criada')}
@@ -281,15 +290,113 @@ function addToGoal(e,id){e.preventDefault();const v=parseBR(new FormData(e.targe
 function buscaAgora(){busca(document.querySelector('.srch').value)}
 function backup(){const o={app:'Meu Dinheiro',version:1,exportedAt:new Date().toISOString(),mode:MODE,data:S};const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(o)],{type:'application/json'}));a.download='meu-dinheiro-backup-'+today()+'.json';document.body.appendChild(a);a.click();a.remove();toast('Backup salvo no seu aparelho')}
 function restoreFile(inp){const f=inp.files&&inp.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const o=JSON.parse(r.result),d=o.data;if(o.app!=='Meu Dinheiro'||!d||!Array.isArray(d.tx)||!Array.isArray(d.goals)||!Array.isArray(d.inv))throw 0;
- const id=x=>String(x.id||uid()).replace(/[^\w-]/g,'')||uid(),num=v=>typeof v==='number'&&isFinite(v)&&v>=0;
+ const id=x=>MODE==='real'?uid():(String(x.id||uid()).replace(/[^\w-]/g,'')||uid()),num=v=>typeof v==='number'&&isFinite(v)&&v>=0;
  const clean={tx:d.tx.filter(t=>t&&num(t.value)&&(t.type==='r'||t.type==='d')&&/^\d{4}-\d{2}-\d{2}$/.test(t.date)).map(t=>({id:id(t),type:t.type,value:t.value,desc:String(t.desc||'').slice(0,60),cat:String(t.cat||'Outros').slice(0,40),date:t.date})),goals:d.goals.filter(g=>g&&num(g.target)&&g.target>0&&num(g.saved)).map(g=>({id:id(g),name:String(g.name||'').slice(0,50),target:g.target,saved:g.saved})),inv:d.inv.filter(i=>i&&num(i.value)&&/^\d{4}-\d{2}-\d{2}$/.test(i.date)).map(i=>({id:id(i),name:String(i.name||'').slice(0,50),type:String(i.type||'Outros').slice(0,40),value:i.value,date:i.date})),initial:num(d.initial)?d.initial:0,view:'dash',relMonth:mshift(0)};
  ask('Restaurar este backup? Isso substitui os dados atuais do modo '+(MODE==='demo'?'demonstração':'Meu controle')+'.',()=>{S=clean;save();render();toast('Backup restaurado')})}catch(e){toast('Arquivo de backup inválido')}inp.value=''};r.readAsText(f)}
+// ===== SUPABASE: dados, login e sincronização =====
+let SNAP={tx:{},goals:{},saved:{},inv:{},initial:0},SYNC={busy:false,again:false,state:'ok'},AUTHEMAIL='',ENTERING=false;
+const cents=v=>Math.round(v*100);
+const rowTx=t=>({id:t.id,type:t.type==='r'?'income':'expense',amount_cents:cents(t.value),description:t.desc,category:t.cat,occurred_on:t.date});
+const rowGoal=g=>({id:g.id,name:g.name,target_cents:cents(g.target)});
+const rowInv=i=>({id:i.id,name:i.name,kind:i.type,amount_cents:cents(i.value),occurred_on:i.date});
+function friendly(e){const m=(e&&e.message)||'';return /LIMITE_FREE/.test(m)?'Limite do plano Free atingido. Veja os planos.':/row-level security|permission denied/i.test(m)?'Sem permissão para essa ação.':/check constraint|invalid input/i.test(m)?'Algum dado está inválido (valor, data ou texto longo demais).':/fetch|network/i.test(m)?'Sem conexão com a internet. Tente de novo.':'Não foi possível salvar. Tente de novo.'}
+function syncText(){return SYNC.state==='saving'?'Salvando…':SYNC.state==='error'?'Erro ao salvar':'Dados salvos na sua conta'}
+function paintSync(){const e=document.getElementById('syncst');if(e)e.textContent=syncText()}
+function scheduleSync(){SYNC.state='saving';paintSync();clearTimeout(scheduleSync.t);scheduleSync.t=setTimeout(syncNow,350)}
+async function pushTable(table,rows,snap){
+ const seen={},ins=[],upd=[];
+ rows.forEach(r=>{seen[r.id]=1;if(!snap[r.id])ins.push(r);else if(JSON.stringify(snap[r.id])!==JSON.stringify(r))upd.push(r)});
+ if(ins.length){const{error}=await SB.from(table).insert(ins);if(error)throw error;ins.forEach(r=>snap[r.id]=r)}
+ for(const r of upd){const{id,...rest}=r;const{error}=await SB.from(table).update(rest).eq('id',id);if(error)throw error;snap[id]=r}
+ const gone=Object.keys(snap).filter(id=>!seen[id]);
+ for(let k=0;k<gone.length;k+=100){const part=gone.slice(k,k+100);const{error}=await SB.from(table).delete().in('id',part);if(error)throw error;part.forEach(id=>delete snap[id])}
+}
+async function syncNow(){
+ if(!SB||!USER||MODE!=='real'||!S)return;
+ if(SYNC.busy){SYNC.again=true;return}
+ SYNC.busy=true;
+ try{
+  do{SYNC.again=false;if(MODE!=='real'||!S)break;
+   await pushTable('goals',S.goals.map(rowGoal),SNAP.goals);
+   Object.keys(SNAP.saved).forEach(id=>{if(!SNAP.goals[id])delete SNAP.saved[id]});
+   await pushTable('transactions',S.tx.map(rowTx),SNAP.tx);
+   await pushTable('investments',S.inv.map(rowInv),SNAP.inv);
+   const cins=[];S.goals.forEach(g=>{const w=cents(g.saved),h=SNAP.saved[g.id]||0;if(w!==h)cins.push({goal_id:g.id,amount_cents:w-h,w})});
+   if(cins.length){const{error}=await SB.from('goal_contributions').insert(cins.map(x=>({goal_id:x.goal_id,amount_cents:x.amount_cents})));if(error)throw error;cins.forEach(x=>SNAP.saved[x.goal_id]=x.w)}
+   const ini=cents(S.initial||0);if(ini!==SNAP.initial){const{error}=await SB.from('profiles').update({initial_balance_cents:ini}).eq('id',USER.id);if(error)throw error;SNAP.initial=ini}
+  }while(SYNC.again);
+  SYNC.state='ok';
+ }catch(e){SYNC.state='error';toast(friendly(e));try{await loadServer()}catch(x){}render()}
+ SYNC.busy=false;paintSync();
+}
+async function fetchAll(t,cols){let out=[];for(let f=0;;f+=1000){const r=await SB.from(t).select(cols).order('id').range(f,f+999);if(r.error)throw r.error;out=out.concat(r.data);if(r.data.length<1000)break}return out}
+async function loadProfile(){const r=await SB.from('profiles').select('name,initial_balance_cents,plan,plan_source,plan_expires_at,trial_used').eq('id',USER.id).maybeSingle();if(r.error)throw r.error;PROFILE=r.data||{name:'',initial_balance_cents:0,plan:'free'}}
+function resnap(){SNAP={tx:{},goals:{},saved:{},inv:{},initial:cents(S.initial||0)};S.tx.forEach(t=>{const r=rowTx(t);SNAP.tx[r.id]=r});S.goals.forEach(g=>{const r=rowGoal(g);SNAP.goals[r.id]=r;SNAP.saved[r.id]=cents(g.saved)});S.inv.forEach(i=>{const r=rowInv(i);SNAP.inv[r.id]=r})}
+async function loadServer(){
+ await loadProfile();
+ const[tx,g,c,iv]=await Promise.all([fetchAll('transactions','id,type,amount_cents,description,category,occurred_on'),fetchAll('goals','id,name,target_cents'),fetchAll('goal_contributions','id,goal_id,amount_cents'),fetchAll('investments','id,name,kind,amount_cents,occurred_on')]);
+ const sv={};c.forEach(x=>sv[x.goal_id]=(sv[x.goal_id]||0)+x.amount_cents);
+ let hide=false;try{hide=localStorage.getItem('md_hide')==='1'}catch(e){}
+ S={tx:tx.map(t=>({id:t.id,type:t.type==='income'?'r':'d',value:t.amount_cents/100,desc:t.description,cat:t.category,date:t.occurred_on})),goals:g.map(x=>({id:x.id,name:x.name,target:x.target_cents/100,saved:(sv[x.id]||0)/100})),inv:iv.map(i=>({id:i.id,name:i.name,type:i.kind,value:i.amount_cents/100,date:i.occurred_on})),initial:(PROFILE.initial_balance_cents||0)/100,view:'dash',relMonth:mshift(0),hide};
+ resnap();
+}
+async function enter(user){
+ if(ENTERING)return;ENTERING=true;
+ try{USER=user;MODE='real';BOOTING=false;S=null;AUTHMSG='';render();
+  try{await loadServer()}catch(e){toast(friendly(e));if(!PROFILE)PROFILE={name:'',plan:'free'};S=Object.assign(empty(),{view:'dash',relMonth:mshift(0),initial:0});resnap()}
+  SYNC.state='ok';render();offerMigration();
+ }finally{ENTERING=false}
+}
+function offerMigration(){try{const k='md_migrated_'+USER.id,old=JSON.parse(localStorage.getItem(KEY+'_real')||'null');if(!old||!old.tx||localStorage.getItem(k)||(!old.tx.length&&!old.goals.length&&!old.inv.length)||S.tx.length||S.goals.length||S.inv.length)return;localStorage.setItem(k,'1');ask('Encontramos dados do Meu controle salvos neste aparelho ('+old.tx.length+' lançamentos). Quer enviar para a sua conta?',()=>importLocal(old))}catch(e){}}
+function importLocal(o){S.tx=o.tx.map(t=>({...t,id:uid()}));S.goals=o.goals.map(g=>({...g,id:uid()}));S.inv=o.inv.map(i=>({...i,id:uid()}));S.initial=o.initial||0;save();render();toast('Enviando seus dados para a conta…')}
+async function boot(){
+ if(!SB){BOOTING=false;AUTHMSG='Não foi possível carregar o Supabase neste ambiente. Abra o site publicado no Chrome.';render();return}
+ SB.auth.onAuthStateChange((ev,session)=>{
+  if(ev==='PASSWORD_RECOVERY'){RECOVERY=true;MODE='none';S=null;AUTHTAB='newpass';BOOTING=false;render();return}
+  if(ev==='SIGNED_OUT'){USER=null;PROFILE=null;if(MODE==='real'){MODE='none';S=null;AUTHTAB='login';render()}return}
+  if(ev==='SIGNED_IN'&&session&&!RECOVERY&&(!USER||USER.id!==session.user.id))setTimeout(()=>enter(session.user),0)});
+ try{const{data}=await SB.auth.getSession();if(data&&data.session&&!RECOVERY){await enter(data.session.user);return}}catch(e){}
+ BOOTING=false;if(RECOVERY){MODE='none';S=null;AUTHTAB='newpass'}render();
+}
+function authErr(e){const m=(e&&e.message)||'';return /Invalid login/i.test(m)?'E-mail ou senha incorretos.':/not confirmed/i.test(m)?'Confirme seu e-mail antes de entrar. Veja sua caixa de entrada e o spam.':/rate limit|too many|seconds/i.test(m)?'Muitas tentativas. Espere alguns minutos e tente de novo.':/already/i.test(m)?'Este e-mail já tem cadastro. Tente entrar.':/password/i.test(m)?'Senha inválida. Use pelo menos 8 caracteres.':/fetch|network/i.test(m)?'Não foi possível conectar. Abra o site publicado no Chrome (dentro do Claude a conexão é bloqueada) e confira sua internet.':'Não foi possível concluir. Tente de novo.'}
+function authTab(t){AUTHTAB=t;AUTHMSG='';render()}
+function goLogin(){authTab('login')}function goSignup(){authTab('signup')}function goReset(){authTab('reset')}
+function noSB(){AUTHMSG='Conexão com o Supabase indisponível neste ambiente.';render()}
+async function doLogin(e){e.preventDefault();if(!SB)return noSB();const f=new FormData(e.target);AUTHEMAIL=f.get('e').trim();const{error}=await SB.auth.signInWithPassword({email:AUTHEMAIL,password:String(f.get('p'))});if(error){AUTHMSG=authErr(error);render()}}
+async function doSignup(e){e.preventDefault();if(!SB)return noSB();const f=new FormData(e.target);AUTHEMAIL=f.get('e').trim();const p=String(f.get('p'));
+ if(p.length<8){AUTHMSG='A senha precisa ter pelo menos 8 caracteres.';render();return}
+ const{data,error}=await SB.auth.signUp({email:AUTHEMAIL,password:p,options:{data:{name:f.get('n').trim().slice(0,80)},emailRedirectTo:location.origin+location.pathname}});
+ if(error){AUTHMSG=authErr(error);render();return}
+ if(data.user&&data.user.identities&&data.user.identities.length===0){AUTHMSG='Este e-mail já tem cadastro. Tente entrar ou recuperar a senha.';render();return}
+ if(!data.session){AUTHTAB='login';AUTHMSG='Conta criada! Enviamos um e-mail de confirmação para '+AUTHEMAIL+'. Abra o e-mail (veja também o spam), toque no link e depois entre aqui.';render()}}
+async function doReset(e){e.preventDefault();if(!SB)return noSB();AUTHEMAIL=new FormData(e.target).get('e').trim();const{error}=await SB.auth.resetPasswordForEmail(AUTHEMAIL,{redirectTo:location.origin+location.pathname});AUTHMSG=error?authErr(error):'Se esse e-mail tiver cadastro, enviamos um link para criar uma nova senha. Veja também o spam.';render()}
+async function doNewPass(e){e.preventDefault();if(!SB)return noSB();const p=String(new FormData(e.target).get('p'));if(p.length<8){AUTHMSG='A senha precisa ter pelo menos 8 caracteres.';render();return}
+ const{data,error}=await SB.auth.updateUser({password:p});if(error){AUTHMSG=authErr(error);render();return}
+ RECOVERY=false;try{history.replaceState(null,'',location.pathname)}catch(x){}toast('Senha alterada com sucesso');enter(data.user)}
+function goDemo(){if(SYNC.state==='saving'){toast('Aguarde: salvando seus dados…');return}MODE='demo';BOOTING=false;S=load('demo');render();window.scrollTo(0,0)}
+function backToAccount(){if(USER)enter(USER)}
+function goAuth(){MODE='none';S=null;AUTHTAB='login';AUTHMSG='';render()}
+async function logout(){if(SYNC.state==='saving'){toast('Aguarde: salvando seus dados…');return}try{await SB.auth.signOut()}catch(e){}USER=null;PROFILE=null;S=null;MODE='none';AUTHTAB='login';AUTHMSG='';render();toast('Você saiu da conta')}
+function delAccount(){ask('Excluir sua conta e TODOS os seus dados? Isso não pode ser desfeito.',async()=>{const{error}=await SB.rpc('delete_my_account');if(error){toast(friendly(error));return}try{await SB.auth.signOut()}catch(e){}USER=null;PROFILE=null;S=null;MODE='none';AUTHTAB='login';AUTHMSG='Sua conta e seus dados foram excluídos.';render()})}
+function authView(){
+ if(BOOTING||MODE==='real')return`<div class='card' style='max-width:460px;margin:14vh auto;text-align:center'><h2>Carregando…</h2><p class='lbl'>Aguarde um instante.</p></div>`;
+ const t=AUTHTAB,em=esc(AUTHEMAIL),msg=AUTHMSG?`<div class='note'>${esc(AUTHMSG)}</div>`:'';
+ const emailIn=`<input name='e' type='email' placeholder='Seu e-mail' autocomplete='email' value='${em}' required>`;
+ let body;
+ if(t==='signup')body=`<h2>Criar minha conta</h2><form class='one' onsubmit=doSignup(event)><input name='n' placeholder='Seu nome' autocomplete='name' required maxlength='80'>${emailIn}<input name='p' type='password' placeholder='Crie uma senha (mínimo 8 caracteres)' autocomplete='new-password' minlength='8' required><button class='btn'>Criar minha conta</button></form>`;
+ else if(t==='reset')body=`<h2>Recuperar senha</h2><p class='lbl'>Digite seu e-mail. Enviaremos um link para criar uma nova senha.</p><form class='one' onsubmit=doReset(event)>${emailIn}<button class='btn'>Enviar link</button></form>`;
+ else if(t==='newpass')body=`<h2>Criar nova senha</h2><form class='one' onsubmit=doNewPass(event)><input name='p' type='password' placeholder='Nova senha (mínimo 8 caracteres)' autocomplete='new-password' minlength='8' required><button class='btn'>Salvar nova senha</button></form>`;
+ else body=`<h2>Entrar</h2><form class='one' onsubmit=doLogin(event)>${emailIn}<input name='p' type='password' placeholder='Sua senha' autocomplete='current-password' required><button class='btn'>Entrar</button></form><p style='text-align:center'><button class='btn ghost sm' onclick=goReset()>Esqueci minha senha</button></p>`;
+ const tabs=t==='newpass'?'':`<div class='tabs'><button class='btn${t==='signup'?' ghost':''}' onclick=goLogin()>Entrar</button><button class='btn${t==='signup'?'':' ghost'}' onclick=goSignup()>Criar conta</button></div>`;
+ const head=`<div style='text-align:center;margin:6vh 0 16px'><span class='lg' style='width:56px;height:56px;font-size:20px'>R$</span><h1 style='margin:10px 0 0'>Meu <span class='pos'>Dinheiro</span></h1><p class='lbl'>Controle financeiro simples e seguro</p></div>`;
+ return`<div style='max-width:460px;margin:0 auto'>${head}<div class='card'>${tabs}${msg}${body}</div><p class='lbl' style='text-align:center'>Seus dados ficam protegidos: cada pessoa só vê o que é seu.</p></div>`}
+window.addEventListener('beforeunload',e=>{if(SYNC.state==='saving'){e.preventDefault();e.returnValue=''}});
 function takeGoal(id,b){const g=S.goals.find(x=>x.id===id),v=parseBR(b.form.a.value);if(!g)return;if(!(v>0)){toast('Digite quanto quer retirar, ex.: 100,00');return}if(v>g.saved+0.001){toast('A meta só tem '+brl(g.saved)+' guardado');return}g.saved=Math.round((g.saved-v)*100)/100;save();render();toast('Retirado da meta: '+brl(v)+'. Voltou para o dinheiro disponível')}
 function delGoal(id){const g=S.goals.find(x=>x.id===id);if(!g)return;ask('Excluir a meta '+g.name+'? Não dá para desfazer.',()=>{S.goals=S.goals.filter(x=>x.id!==id);save();render();toast('Meta excluída')})}
 function addInv(e){e.preventDefault();const f=new FormData(e.target),v=parseBR(f.get('v'));
  if(!(v>0)){toast('Valor inválido');return}if(v>avail()+0.001){toast('Você só tem '+brl(avail())+' disponível para investir');return}S.inv.push({id:uid(),name:f.get('n').trim(),type:f.get('t'),value:v,date:f.get('dt')});save();render();toast('Investimento registrado')}
 function delInv(id){const i=S.inv.find(x=>x.id===id);if(!i)return;ask('Excluir o investimento '+i.name+'? Não dá para desfazer.',()=>{S.inv=S.inv.filter(x=>x.id!==id);save();render();toast('Investimento excluído')})}
-function setPlan(p){if(p==='pro'){if(gTrial()){toast(isPro()?'Seu teste já está ativo':'O teste grátis de 7 dias já foi usado neste aparelho');return}try{localStorage.setItem('md_trial',String(Date.now()))}catch(e){toast('Não foi possível iniciar o teste neste navegador');return}toast('7 dias de teste PRO ativados (simulação, sem cobrança)')}else toast('O teste termina sozinho depois de 7 dias');render()}
+async function setPlan(p){if(MODE==='real'){if(p!=='pro'){toast('O teste termina sozinho depois de 7 dias');return}const{error}=await SB.rpc('start_trial');if(error){toast(/TESTE_INDISPONIVEL/.test(error.message)?'O teste grátis de 7 dias já foi usado nesta conta':friendly(error));return}await loadProfile();render();toast('7 dias de teste PRO ativados. Aproveite!');return}if(p==='pro'){if(gTrial()){toast(isPro()?'Seu teste já está ativo':'O teste grátis de 7 dias já foi usado neste aparelho');return}try{localStorage.setItem('md_trial',String(Date.now()))}catch(e){toast('Não foi possível iniciar o teste neste navegador');return}toast('7 dias de teste PRO ativados (simulação, sem cobrança)')}else toast('O teste termina sozinho depois de 7 dias');render()}
 function resetDemo(){const d=MODE==='demo';ask(d?'Restaurar os dados de demonstração?':'Apagar todos os seus dados e voltar para R$ 0,00?',()=>{S=d?seed():empty();S.view='planos';save();render();toast(d?'Dados restaurados':'Tudo zerado')})}
 function goRec(){go('rec')}function goMetas(){go('metas')}function goPlanos(){go('planos')}
 function hl(s,q){s=String(s);const i=s.toLowerCase().indexOf(q);return i<0?esc(s):esc(s.slice(0,i))+'<mark>'+esc(s.slice(i,i+q.length))+'</mark>'+esc(s.slice(i+q.length))}
@@ -310,8 +417,9 @@ function areaChart(ms){
  s+=`<path d='${ar('d')}' fill='url(#go)'/><path d='${line('d')}' fill='none' stroke='#f59e0b' stroke-width='2.5'/><path d='${ar('r')}' fill='url(#gg)'/><path d='${line('r')}' fill='none' stroke='#22c55e' stroke-width='2.5'/>`;
  D.forEach((x,i)=>{s+=`<circle cx='${px(i)}' cy='${py(x.r)}' r='4' fill='#22c55e'><title>${mlabel(x.m)} · Receitas ${brl(x.r)}</title></circle><circle cx='${px(i)}' cy='${py(x.d)}' r='4' fill='#f59e0b'><title>${mlabel(x.m)} · Despesas ${brl(x.d)}</title></circle><text x='${px(i)}' y='${H+18}' fill='#8fa098' font-size='12' text-anchor='middle'>${mlabel(x.m)}</text>`});
  return s+`</svg><div class='lbl'><span class='pos'>■</span> Receitas &nbsp; <span style='color:#f59e0b'>■</span> Despesas</div>`}
-function render(){isPro();nav();document.getElementById('main').innerHTML=modeBar()+topBar()+`<div id='sr'></div><div id='vw'>${V[S.view]()}</div>`}
+function render(){const nv=document.getElementById('nav'),mn=document.getElementById('main');if(MODE==='none'||!S){nv.style.display='none';mn.innerHTML=authView();return}nv.style.display='';nav();mn.innerHTML=modeBar()+topBar()+`<div id='sr'></div><div id='vw'>${V[S.view]()}</div>`}
 render();
+boot();
 </script>
 </body>
 </html>
